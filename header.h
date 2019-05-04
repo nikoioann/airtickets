@@ -66,8 +66,9 @@ extern list *lista;
 extern pthread_barrier_t barrier_phaseA;
 extern pthread_barrier_t barrier_phaseB;
 extern pthread_barrier_t barrier_phaseC;
+extern pthread_barrier_t mybar;
 extern pthread_mutex_t cntr_lock;
-extern int *flgas;
+extern int *flags;
 extern int number_of_inserter_airlines;
 pthread_t *bookers,*managers,controllerA,controllerB;
 
@@ -93,4 +94,7 @@ int check_args(int,const char**);
 int isfull(stack*);
 void print_everything(void);
 int list_finished(void);
+int list_empty(void);
+int inserter_airlines_finished();
+void free_everything(void);
 #endif

@@ -1,5 +1,7 @@
 #include "header.h"
 
+//deleting head while inserting second ??????
+
 int A=0;
 int number_of_inserter_airlines=0;
 int *flags = NULL;
@@ -9,6 +11,7 @@ list *lista=NULL;
 pthread_barrier_t barrier_phaseA;
 pthread_barrier_t barrier_phaseB;
 pthread_barrier_t barrier_phaseC;
+pthread_barrier_t mybar;
 pthread_mutex_t cntr_lock;
 
 
@@ -32,7 +35,7 @@ void *ticket_booking(void* ptr){
 
 void *controlA(void* ptr){
     pthread_barrier_wait(&barrier_phaseA);
-    int cntr = 0,err=0,sum=0,expected_sum=0;
+    int cntr = 0,err=0,sum=0,expected_sum=0,inq=0;
     unsigned long long keysum=0,expected_keysum=0;
     stack *s;
     stack_reservation *sr;
@@ -47,8 +50,19 @@ void *controlA(void* ptr){
     for(cntr=0;cntr<A;cntr++){
         s = flights[cntr]->completed_reservations;
         sum += s->size;
+
+        qr = flights[cntr]->pending_reservations->head->next;
+        if(qr) number_of_inserter_airlines++;
+        inq=0;
+        while(qr!=NULL){
+            keysum+= qr->reservation.reservation_number;
+            sum++;
+            inq++;
+            qr = qr->next;
+        }
+        
         if(s->size <= s->capacity){
-            printf("Flight %d :  stack overflow check passed (capacity: %d, found: %d)\n",cntr,s->capacity,s->size);
+            printf("Flight %d :  stack overflow check passed (capacity: %d, found: %d, queue: %d)\n",cntr,s->capacity,s->size,inq);
         }else{
             sprintf(errors[err++],"FAILURE:Flight %d : stack overflow check failed (capacity: %d, found: %d)\n",cntr,s->capacity,s->size);
         }
@@ -57,14 +71,6 @@ void *controlA(void* ptr){
         while(sr!=NULL){
             keysum += sr->reservation.reservation_number;
             sr = sr->next;
-        }
-
-        qr = flights[cntr]->pending_reservations->head->next;
-        while(qr!=NULL){
-            keysum+= qr->reservation.reservation_number;
-            number_of_inserter_airlines++;
-            sum++;
-            qr = qr->next;
         }
     }
 
@@ -109,15 +115,15 @@ void *manage_reservations(void* ptr){
             insert_list(res);
         }
     }
-    flags[airline_id] = 0;
-    while(!isfull(flights[airline_id]->completed_reservations) && (!list_finished() || lista->head->next!=NULL)){
-    // while(!isfull(flights[airline_id]->completed_reservations) && (number_of_inserter_airlines > 0 || lista->head->next!=NULL)){
-        // printf("%d && ( %d || %d)\n",!isfull(flights[airline_id]->completed_reservations),number_of_inserter_airlines,lista->head->next!=NULL);
-        if((list_res = delete_head()) != NULL){
-            // pthread_mutex_lock(&cntr_lock);
-            // number_of_inserter_airlines--;
-            // pthread_mutex_unlock(&cntr_lock);
 
+    // pthread_mutex_lock(&cntr_lock);
+    // number_of_inserter_airlines--;
+    // pthread_mutex_unlock(&cntr_lock);
+
+    flags[airline_id] = 0;
+    while(!isfull(flights[airline_id]->completed_reservations) && (!list_finished() || !list_empty() )){
+    // while(!isfull(flights[airline_id]->completed_reservations) && (inserter_airlines_finished() || !list_empty())){
+        if((list_res = delete_head()) != NULL){
             res->agency_id = list_res->reservation.agency_id;
             res->reservation_number = list_res->reservation.reservation_number;
             if(!insert_in_my_stack(flights[airline_id]->completed_reservations,res)){
@@ -182,7 +188,7 @@ void *controlB(void* ptr){
     }
 
     if(!queueflag){
-        if(lista->head->next == NULL){
+        if(list_empty()){
             printf("reservations completion check passed\n");
         }else{
             sprintf(errors[err++],"FAILURE:Reservation managment center not empty)\n");
@@ -287,51 +293,63 @@ int insert_list(Reservation *res) {
     while (1) {
         pred = lista->head;
         curr = pred->next;
-        while (curr!=NULL && curr->reservation.reservation_number < res->reservation_number) {
+        while (curr->reservation.reservation_number!=-1 && curr->reservation.reservation_number < res->reservation_number) {
             pred = curr;
             curr = curr->next;
         }
 
         pthread_mutex_lock(&pred->lock);
-        if(curr!=NULL)pthread_mutex_lock(&curr->lock);
+        pthread_mutex_lock(&curr->lock);
         if (validate(pred, curr)) {
-            if (curr!=NULL && res->reservation_number == curr->reservation.reservation_number) {
+            if (curr->reservation.reservation_number!=-1 && res->reservation_number == curr->reservation.reservation_number) {
                 result = 0; 
                 return_flag = 1;
             }
             else {
                 list_reservation *node = (list_reservation*)malloc(sizeof(list_reservation));
                 node->next = curr;
+                node->marked = 0;
                 node->reservation.agency_id = res->agency_id;
                 node->reservation.reservation_number = res->reservation_number;
                 pthread_mutex_init(&node->lock,0);
                 pred->next = node;
-                if(curr == NULL) lista->tail = node;
                 result = 1;
                 return_flag = 1;
             }
         }
         pthread_mutex_unlock(&pred->lock);
-        if(curr!=NULL)pthread_mutex_unlock(&curr->lock);
+        pthread_mutex_unlock(&curr->lock);
         if(return_flag) return result;
     }
 }
 
-list_reservation *delete_head() {
-    list_reservation *curr=NULL;
 
-    pthread_mutex_lock(&lista->head->lock);
-    if(lista->head != lista->tail){
-        curr=lista->head->next;
-        if(lista->head->next)
-            lista->head->next = lista->head->next->next;
+list_reservation *delete_head() {
+    list_reservation *pred=NULL,*curr=NULL,*result=NULL;
+    int return_flag = 0;
+
+    while(1){
+        pred = lista->head;
+        curr = pred->next;
+        pthread_mutex_lock(&pred->lock);
+        pthread_mutex_lock(&curr->lock);
+        if(validate(pred,curr)){
+            if(curr->reservation.reservation_number!=-1){
+                result = curr;
+                curr->marked = 1;
+                pred->next = curr->next;
+            }
+            return_flag = 1;
+        }
+        pthread_mutex_unlock(&curr->lock);
+        pthread_mutex_unlock(&pred->lock);
+        if(return_flag)    return result;
     }
-    pthread_mutex_unlock(&lista->head->lock);
-    return curr;
+
 } 
 
 int validate(list_reservation *pred, list_reservation *curr) {
-    if (pred->marked == 0 && (curr==NULL || curr->marked == 0) && pred->next == curr) 
+    if (pred->marked == 0 && curr->marked == 0 && pred->next == curr) 
         return 1;
     else 
         return 0;
@@ -362,12 +380,13 @@ void init(void){
     
     flights = (flight_reservation**)malloc(A*sizeof(flight_reservation*));
     for(cntr = 0; cntr < A; cntr++){
-        flights[cntr] = new_flight_reservation( (  1.5* (A*A) ) - (A-1-cntr)*A);
+        flights[cntr] = new_flight_reservation( (  1.5 * (A*A) ) - (A-1-cntr)*A);
     }
 
     pthread_barrier_init(&barrier_phaseA,NULL, A*A+ 1);
     pthread_barrier_init(&barrier_phaseB,NULL, A  + 1);
     pthread_barrier_init(&barrier_phaseC,NULL, A  + 1);
+    pthread_barrier_init(&mybar,NULL, A);
 
     bookers  = malloc(sizeof(pthread_t) * A*A );
     managers = malloc(sizeof(pthread_t) * A   );
@@ -378,13 +397,26 @@ void init(void){
 
     lista = (list*)malloc(sizeof(list));
     lista->head = (list_reservation*)malloc(sizeof(list_reservation));
-    lista->tail = lista->head;
-    lista->head->next = NULL;
+    lista->tail = (list_reservation*)malloc(sizeof(list_reservation));
+    lista->head->next = lista->tail;
     lista->head->marked = 0;
     lista->head->reservation.reservation_number = -1;
     pthread_mutex_init(&lista->head->lock,0);
+    lista->tail->next = NULL;
+    lista->tail->marked = 0;
+    lista->tail->reservation.reservation_number = -1;
+    pthread_mutex_init(&lista->tail->lock,0);
 
 }
+
+int inserter_airlines_finished(){
+    int ret=0;
+    pthread_mutex_lock(&cntr_lock);
+    if(number_of_inserter_airlines == 0) ret = 1;
+    pthread_mutex_unlock(&cntr_lock);
+    return ret;
+}
+
 
 int list_finished(){
     int i;
@@ -392,6 +424,10 @@ int list_finished(){
         if(flags[i]) return 0;
     }
     return 1;
+}
+
+int list_empty(){
+    return lista->head->next == lista->tail;
 }
 
 void print_everything(){
@@ -419,4 +455,42 @@ void print_everything(){
         l=l->next;
     }
     printf("\n");
+}
+
+void free_everything(){
+        for(int cntr = 0; cntr < A; cntr++){
+        stack_reservation *tmp;
+        queue_reservation *tmp2;
+        list_reservation *tmp3;
+        pthread_mutex_destroy(&(flights[cntr]->completed_reservations->top_lock));
+        while((tmp = flights[cntr]->completed_reservations->top) != NULL){
+            flights[cntr]->completed_reservations->top=flights[cntr]->completed_reservations->top->next;
+            free(tmp);
+        }
+        free(flights[cntr]->completed_reservations);
+
+        pthread_mutex_destroy(&(flights[cntr]->pending_reservations->head_lock));
+        pthread_mutex_destroy(&(flights[cntr]->pending_reservations->tail_lock));
+        
+        while((tmp2 = flights[cntr]->pending_reservations->head) != NULL){
+            flights[cntr]->pending_reservations->head=flights[cntr]->pending_reservations->head->next;
+            free(tmp2);
+        }
+        free(flights[cntr]->pending_reservations);
+
+        while((tmp3 = lista->head) != NULL){
+            lista->head = lista->head->next;
+            pthread_mutex_destroy(&tmp3->lock);
+            free(tmp3);
+        }
+        // free(lista);
+    }
+
+    pthread_mutex_destroy(&cntr_lock);
+    pthread_barrier_destroy(&barrier_phaseA);
+    pthread_barrier_destroy(&barrier_phaseB);
+    pthread_barrier_destroy(&barrier_phaseC);
+    free(flags);
+    free(bookers);
+    free(managers);
 }

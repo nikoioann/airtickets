@@ -30,8 +30,7 @@ int main(int argc, char const *argv[])
 
     // print_everything();
     
-    free(bookers);
-    //free flights,mutex,barriers
+    free_everything();
 
     return 0;
 }

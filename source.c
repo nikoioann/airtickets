@@ -1,7 +1,5 @@
 #include "header.h"
 
-//deleting head while inserting second ??????
-
 int A=0;
 int number_of_inserter_airlines=0;
 int *flags = NULL;
